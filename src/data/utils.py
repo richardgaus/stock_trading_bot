@@ -18,3 +18,22 @@ def train_validation_test_split(
         timeframes)
     """
     pass
+
+def make_features_output_df(timeseries:DataFrame,
+                            timestep:"Date",
+                            outputs:List[str],
+                            num_timesteps:int=365,
+                            future_interval:Tuple[int]=(1, 3, 7),
+                            ) -> (DataFrame, DataFrame):
+    """ Create X and y dataframes from raw timeseries data
+
+    Args:
+        timeseries: Timeseries dataframe
+        outputs:
+        num_timesteps:
+        future_interval:
+
+    Returns:
+
+    """
+    pass
