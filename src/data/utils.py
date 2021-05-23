@@ -1,5 +1,7 @@
 from typing import List, Tuple
+from copy import deepcopy
 
+import warnings
 import numpy as np
 from pandas import DataFrame
 
@@ -52,7 +54,8 @@ def make_Xy(timeseries:DataFrame,
             features:List[str],
             outputs:List[str],
             num_timesteps:int=365,
-            future_interval:Tuple[int]=(1, 3, 7)
+            future_interval:Tuple[int]=(1, 3, 7),
+            standardize:bool=False
             ) -> (np.array, np.array):
     """ Create X and y dataframes from raw timeseries data. Most recent
     timesteps must be most upward in dataframe.
@@ -67,6 +70,14 @@ def make_Xy(timeseries:DataFrame,
     Returns:
         X, y for training of neural networks.
     """
+    if standardize:
+        if not set(outputs).issubset(features):
+            raise ValueError('When standardizing, all outputs must be in the features as well, '
+                             'so the outputs can be standardized using parameters acquired from'
+                             ' inputs.')
+        outputs_idx = np.array([
+            features.index(out) for out in outputs
+        ])
     ts_reverse = timeseries.iloc[::-1]
     X_list = []
     y_list = []
@@ -76,10 +87,49 @@ def make_Xy(timeseries:DataFrame,
             ts_reverse.iloc[t - num_timesteps + 1:t + 1][features].transpose().to_numpy()
         )
         y_list.append(
-            ts_reverse.iloc[[t + f for f in future_interval]][outputs].to_numpy().flatten()
+            ts_reverse.iloc[[t + f for f in future_interval]][outputs].transpose().to_numpy()
         )
         t += 1
-    X = np.stack(X_list)
-    y = np.stack(y_list)
+
+    if len(X_list) == 0:
+        warnings.warn('X, y are empty. Use lower num_timesteps or '
+                      'future_interval or supply longer timeseries.')
+        X = np.array(None)
+        y = np.array(None)
+    else:
+        X = np.stack(X_list)
+        y = np.stack(y_list)
+        if standardize and len(X_list) > 0:
+            # Standardize X and y with parameters acquired on X
+            means = np.expand_dims(np.mean(X, axis=2), 2)
+            stds = np.expand_dims(np.std(X, axis=2), 2)
+            X = (X - means) / stds
+            y = (y - means[:, outputs_idx, :]) / stds[:, outputs_idx, :]
+            y = np.reshape(y, newshape=(y.shape[0], -1), order='F')
 
     return X, y
+
+def make_output_relative(y:np.array,
+                         X:np.array,
+                         reference_idx:int) -> np.array:
+    """ Convert each value in y to percentual change relative to most recent
+    value in X at index reference_idx.
+    E.g. turn stock prices into percentual increase/decrease relative to last
+    close.
+
+    Args:
+        y: Output values
+        X: Input timeseries data
+        reference_idx: Index of reference feature
+
+    Returns:
+        Converted y
+    """
+    if len(X.shape) == 0:
+        raise ValueError('X must not be an empty array.')
+    y_out = deepcopy(y)
+    for i in range(X.shape[0]):
+        reference_value = X[i][reference_idx, -1]
+        y_out[i] = (y_out[i] - reference_value) / reference_value
+
+    return y_out

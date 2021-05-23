@@ -1,5 +1,7 @@
 from typing import List
 
+import os
+import shutil
 import numpy as np
 from pandas import DataFrame
 from keras.models import Model
@@ -30,6 +32,8 @@ def train_model(model:Model,
                 num_epochs:int=500):
     # Tensorboard logging
     logdir = logdir_parent / f'lr{learning_rate}eps{num_epochs}bs{batch_size}'
+    if os.path.isdir(logdir):
+        shutil.rmtree(logdir)
     tensorboard_callback = TensorBoard(log_dir=logdir)
     # Reduce learning rate on plateaus
     reduce_lr = ReduceLROnPlateau(
@@ -54,5 +58,5 @@ def train_model(model:Model,
         epochs=num_epochs,
         callbacks=callback_list,
         verbose=2,
-        #validation_data=(X_valid, y_valid)
+        validation_data=(X_valid, y_valid)
     )
