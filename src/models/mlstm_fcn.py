@@ -5,14 +5,15 @@ from keras.layers import (
     multiply, Reshape
 )
 
-def generate_model(num_variables,
-                   num_timesteps=365,
-                   dropout_probability=0.8):
-    ip = Input(shape=(num_variables, num_timesteps))
+def generate_model(num_features:int,
+                   num_timesteps:int=365,
+                   num_lstm_units:int=8,
+                   dropout_probability:float=0.8):
+    ip = Input(shape=(num_features, num_timesteps))
 
     x = Masking()(ip)
-    x = LSTM(8)(x)
-    x = Dropout(0.8)(x)
+    x = LSTM(units=num_lstm_units)(x)
+    x = Dropout(dropout_probability)(x)
 
     y = Permute((2, 1))(ip)
     y = Conv1D(128, 8, padding='same', kernel_initializer='he_uniform')(y)
@@ -49,7 +50,7 @@ def squeeze_excite_block(input):
 
     Returns: a keras tensor
     """
-    filters = input._keras_shape[-1] # channel_axis = -1 for TF
+    filters = input.shape[-1] # channel_axis = -1 for TF
 
     se = GlobalAveragePooling1D()(input)
     se = Reshape((1, filters))(se)
