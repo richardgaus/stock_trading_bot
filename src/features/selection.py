@@ -1,90 +1,108 @@
-# pearson's correlation feature selection for numeric input and numeric output
-from sklearn.datasets import make_regression
-from sklearn.feature_selection import SelectKBest
-from sklearn.feature_selection import f_regression
-from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import RobustScaler
-import datetime
 import numpy as np
 
 # read in data
 import pandas as pd
+import graphing
 
-# clean data
-data = pd.read_csv('../data/historical_price_data_wol.csv', sep=';')
-data['date'] = pd.to_datetime(data["date"])
-data = data.sort_values(by='date')
-data = data.drop(['label', 'acceptedDate', 'reportedCurrency', 'period', 'symbol', 'date', 'fillingDate'], axis=1)
-transformer = RobustScaler(quantile_range=(5.0, 95.0)).fit(data)
-data = pd.DataFrame(transformer.transform(data), columns=data.columns)
-data_labels = data.columns.tolist()
-def label_to_idx(label):
-    return data_labels.index(label)
+def assess_p_correlation(corr_table_per_lag, output_labels, data_labels) -> [str]:
+    print('selecting highest correlations...')
+    input_features = set(data_labels) - set(output_labels)
+    max_corr = pd.DataFrame(data=np.zeros((len(output_labels), len(input_features))), columns=input_features,
+                            index=set(output_labels))
+    max_corr_lags = {}
 
-# format input & output data
-output_labels = ['high']
-input_data = data.drop(output_labels, axis=1)
-output_data = data[output_labels]
-output_data_relative = output_data.copy()
-for index, row in output_data.iterrows():
-    if index == 0 or output_data['high'][index-1] == 0: continue
-    output_data_relative['high'][index] = (output_data['high'][index] - output_data['high'][index-1]) / output_data['high'][index-1]
+    for lag, corr_for_lag in enumerate(corr_table_per_lag):
+        if (lag == 0): continue
+        # corr_for_lag is a correlation matrix between all features for the lag
+        output_cols = corr_for_lag[output_labels]
+        for output_feature in output_cols:
+            for input_feature, input_feature_corr in output_cols[output_feature].items():
+                if (input_feature not in max_corr_lags.keys()): max_corr_lags[input_feature] = {}
+                if input_feature_corr != 0 and input_feature in data_labels and input_feature not in output_labels and abs(
+                        input_feature_corr) > max_corr[input_feature][output_feature]:
+                    max_corr[input_feature][output_feature] = abs(input_feature_corr)
+                    max_corr_lags[input_feature][output_feature] = lag
 
-rows = input_data.values
-labels = input_data.columns
-input_labels = input_data.columns
-input_labels_number = len(input_labels)
+    # for each input feature, take maximum correlation to output
+    max_corr_reduced = {}
+    for input_feature in max_corr:
+        max_corr_reduced[input_feature] = max_corr[input_feature].max()
 
+    sorted_features = {k: v for k, v in sorted(max_corr_reduced.items(), key=lambda item: item[1])}
+    return sorted_features
 
-def assess_time_correlation(tc) -> [str]:
-    max_pvals = [np.Infinity] * input_labels_number
-    for i, day_correlation in enumerate(tc):
-        feature_sum = 0
-        for i, pval in enumerate(day_correlation[1]):
-            if pval != 0 and pval < max_pvals[i]:
-                max_pvals[i] = pval
-
-    avg = sum(max_pvals) / len(max_pvals)
-    sorted_indicies = np.argsort(max_pvals)
-    print("above average features: \n")
-    for i, idx in enumerate(sorted_indicies):
-        if i > 3: break
-        print("{}: {}".format(input_labels[idx], max_pvals[idx]))
-    return max_pvals
-
-def assess_p_correlation(tc) -> [str]:
-    max_corr = [0] * (len(data_labels) + 1)
-    # max_day
-    for day, day_correlation in enumerate(tc):
-        output_idx = label_to_idx(output_labels[0])
-        output_row = day_correlation[output_idx]
-        for feature_idx, corr in enumerate(output_row):
-            if corr != 0 and feature_idx != output_idx and corr > max_corr[feature_idx]:
-                max_corr[feature_idx] = corr
-
-    sorted_indicies = np.argsort(max_corr, )
-#     print("above average features: \n")
-#     for i, idx in enumerate(reversed(sorted_indicies)):
-#         # if i > 3: break
-#         if idx > len(data_labels) or idx > len(max_corr): break
-#         print("{}: {}".format(data_labels[idx], max_corr[idx]))
-    return sorted_indicies
-
-
-
-
-# time_correlation[10] - p values for each column when shifted 10 days back
-time_correlation = []
-for i in range(0, 14):
-    # corr = f_regression(input_data, output_data)
-    corr = np.corrcoef(np.transpose(data))
-    time_correlation.append(corr)
-    output_data_relative = pd.concat([pd.Series(0), output_data_relative])
-    input_data = pd.concat([pd.DataFrame(0, index=np.arange(1), columns=labels), input_data])
 
 # define feature selection
 # fs = SelectKBest(score_func=f_regression, k=10)
 # apply feature selection
 # X_selected = fs.fit_transform(rows, output_data)
 
-label_idx_sorted_by_corr = assess_p_correlation(time_correlation)
+def normalize(stock_data):
+    print('normalizing...')
+    transformer = RobustScaler(quantile_range=(5.0, 95.0)).fit(stock_data)
+    return pd.DataFrame(transformer.transform(stock_data), columns=stock_data.columns)
+
+
+def relativize(stock_data, ignore_columns=None):
+    print('relativizing...')
+    if ignore_columns is None:
+        ignore_columns = []
+
+    relative_data = stock_data.copy()
+    for index, row in stock_data.iterrows():
+        if index == 0 or (stock_data.loc[index - 1] == 0).all(): continue
+        relative_data.loc[index] = (stock_data.loc[index] - stock_data.loc[index - 1]) / stock_data.loc[index - 1]
+
+    relative_data[ignore_columns] = stock_data[ignore_columns]
+    return relative_data
+
+
+DAYS_LAG = 14
+
+# Returns dict: { feature_name: max_correlation }
+def select_relevant_features(stock_data, output_labels: [str]):
+    stock_data = normalize(stock_data)
+    # stock_data = relativize(stock_data, ['sentiment'])
+
+    data_labels = stock_data.columns.tolist()
+    input_data = stock_data.drop(output_labels, axis=1)
+    output_data = stock_data[output_labels]
+    output_data_relative = output_data.copy()
+
+    rows = input_data.values
+    labels = input_data.columns
+    input_labels = input_data.columns
+    input_labels_number = len(input_labels)
+
+    # time_correlation[10] - p values for each column when shifted 10 days back
+    corr_table_per_lag = []
+
+    print('calculating correlations for different time lags...')
+    for i in range(0, DAYS_LAG):
+        # corr = f_regression(input_data, output_data)
+        # corr = np.corrcoef(np.transpose(stock_data))
+        corr = abs(stock_data.corr())
+        corr_table_per_lag.append(corr)
+        stock_data[input_labels] = stock_data[input_labels].shift(1)
+        stock_data = stock_data.fillna(0)
+
+    features = assess_p_correlation(corr_table_per_lag, output_labels, data_labels)
+    return corr_table_per_lag, features
+
+if __name__ == '__main__':
+    data = pd.read_csv('../../data/raw/historical_price_data_wol.csv', sep=';')
+    aapl_sentiment = pd.read_csv('../../data/raw/aapl_sentiment_news.csv').rename(columns={'Datetime': 'date'})
+
+    # Join stock data and sentiment
+    data['date'] = pd.to_datetime(data["date"])
+    aapl_sentiment['date'] = pd.to_datetime(aapl_sentiment["date"])
+    data = data.merge(aapl_sentiment, on='date')
+
+    data = data.sort_values(by='date')
+    data = data.drop(['label', 'acceptedDate', 'reportedCurrency', 'period', 'symbol', 'date', 'fillingDate'], axis=1)
+
+    corr, features = (select_relevant_features(data, ['high']))
+    print('done.')
+
+    print(features)
